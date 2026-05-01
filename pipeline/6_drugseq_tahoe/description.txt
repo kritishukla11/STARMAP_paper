@@ -1,0 +1,340 @@
+STARMAP Tahoe Drug Perturbation Validation Pipeline
+Input / Description / Output Specification
+
+This folder contains two scripts that run sequentially:
+
+1. Compute ssGSEA TRN scores for Tahoe pseudobulk drug profiles
+2. Compare drug-response TRN shifts against STARMAP drug log-odds rankings
+
+Recommended order:
+    python 1_tahoe_ssgsea_mut_vs_other.py GENE
+    python 2_tahoe_empirical_confidence.py GENE
+
+
+============================================================
+SCRIPT 1: Tahoe ssGSEA Mutant vs Other Cell Lines
+============================================================
+
+Purpose:
+    This script evaluates TRN activity across Tahoe drug perturbation
+    pseudobulk expression profiles. For a selected gene, it separates
+    cell lines into gene-mutant and other groups, then computes ssGSEA
+    scores for each TRN gene set under each drug condition.
+
+Command:
+    python script.py GENE
+
+Example:
+    python script.py TP53
+
+----------------------------------------
+INPUT
+----------------------------------------
+
+1. Command-line argument:
+    GENE
+
+    Example:
+        TP53
+
+2. Tahoe pseudobulk expression files:
+    Directory:
+        ../data/tahoe_data_pseudobulk_cellline/
+
+    Expected file pattern:
+        <DRUG>_pseudobulk.parquet
+
+    Expected format:
+        Rows:
+            genes / expression features
+
+        Columns:
+            cell lines or RRID identifiers
+
+3. Somatic mutation annotation file:
+    Path:
+        ../data/OmicsSomaticMutations.csv
+
+    Required columns:
+        HugoSymbol
+        ModelID
+
+4. Sample information file:
+    Path:
+        ../data/sample_info.csv
+
+    Required columns:
+        DepMap_ID
+        RRID
+        CCLE_Name
+
+5. TRN gene-set files:
+    Directory:
+        ../../5_perturbseq_xatlas/data/trn_gene_sets/
+
+    Expected file pattern:
+        <TRN>_geneset.csv
+
+    Required columns:
+        0
+
+    Description:
+        Column "0" contains the genes in each TRN gene set.
+
+----------------------------------------
+PROCESSING DESCRIPTION
+----------------------------------------
+
+For the selected gene, the script:
+
+- Loads all Tahoe pseudobulk drug files
+- Loads mutation calls from OmicsSomaticMutations.csv
+- Maps DepMap / RRID identifiers to CCLE cell-line names
+- Finds cell lines with mutations in the selected gene
+- Separates Tahoe pseudobulk columns into:
+    - mutant cell lines
+    - other cell lines
+- For each drug:
+    - Loads the pseudobulk expression matrix
+    - Renames columns to CCLE cell-line names
+    - Splits data into mutant and other groups
+    - Loops through all TRN gene sets
+    - Runs ssGSEA separately on:
+        - mutant cell lines
+        - other cell lines
+    - Stores normalized enrichment scores for all TRNs
+
+----------------------------------------
+OUTPUT
+----------------------------------------
+
+Output directory:
+    ../output/<GENE>_mut_v_other_perdrug/
+
+Example:
+    ../output/TP53_mut_v_other_perdrug/
+
+Output files per drug:
+    ssgsea_cluster_all_trns_<DRUG>.csv
+    ssgsea_other_all_trns_<DRUG>.csv
+
+Example:
+    ssgsea_cluster_all_trns_DMSO_TF.csv
+    ssgsea_other_all_trns_DMSO_TF.csv
+
+----------------------------------------
+OUTPUT FILE COLUMNS
+----------------------------------------
+
+Each output CSV contains:
+
+Unnamed: 0
+    Cell-line/sample index from gseapy output
+
+<TRN_1>
+<TRN_2>
+...
+<TRN_N>
+
+Each TRN column contains the ssGSEA normalized enrichment score
+for that TRN in each cell line.
+
+----------------------------------------
+OUTPUT DESCRIPTION
+----------------------------------------
+
+The output files contain drug-specific TRN activity profiles for:
+
+- cell lines mutated in the selected gene
+- all other cell lines
+
+These files are used downstream to test whether drug treatment changes
+TRN activity in mutant cell lines and whether that signal agrees with
+STARMAP drug rankings.
+
+
+============================================================
+SCRIPT 2: Tahoe Empirical Confidence from Drug Rankings
+============================================================
+
+Purpose:
+    This script compares Tahoe-derived TRN response evidence against
+    STARMAP drug log-odds rankings. It asks whether drugs ranked highly
+    by STARMAP also show significant TRN score shifts in Tahoe mutant
+    cell lines.
+
+Command:
+    python script.py GENE
+
+Example:
+    python script.py TP53
+
+----------------------------------------
+INPUT
+----------------------------------------
+
+1. Command-line argument:
+    GENE
+
+    Example:
+        TP53
+
+2. STARMAP drug log-odds ranking file:
+    Path:
+        ../../4_drug_logodds/output/logodds_results/<GENE>/sorted_mlp.csv
+
+    Required columns:
+        drug
+        log2_odds_ratio
+
+3. Tahoe ssGSEA files from Script 1:
+    Directory:
+        ../output/<GENE>_mut_v_other_perdrug/
+
+    Required files:
+        ssgsea_cluster_all_trns_<DRUG>.csv
+        ssgsea_other_all_trns_<DRUG>.csv
+
+4. DMSO control file:
+    Path:
+        ../output/<GENE>_mut_v_other_perdrug/ssgsea_cluster_all_trns_DMSO_TF.csv
+
+    Description:
+        Used as the untreated/control mutant-cell-line reference.
+
+----------------------------------------
+PROCESSING DESCRIPTION
+----------------------------------------
+
+For the selected gene, the script:
+
+- Loads the STARMAP sorted MLP drug ranking
+- Loads DMSO mutant-cell-line ssGSEA scores as the control
+- Calculates mean TRN expression/activity using the first 10 columns,
+  excluding "Unnamed: 0"
+- Finds all drug-specific Tahoe ssGSEA outputs
+- For each drug:
+    - Loads mutant-cell-line TRN scores
+    - Loads other-cell-line TRN scores
+    - Computes mean TRN activity per row
+    - Runs Wilcoxon rank-sum tests:
+        1. drug-treated mutant vs DMSO mutant control
+        2. drug-treated mutant vs drug-treated other cell lines
+- Normalizes drug names to improve matching between Tahoe and STARMAP
+- Merges Tahoe p-values with STARMAP drug rankings
+- Sorts by:
+    - high STARMAP log2 odds ratio
+    - low Tahoe mutant-vs-control p-value
+- Computes cumulative empirical confidence:
+    confidence = cumulative significant drugs / rank
+- Normalizes confidence to 0-1
+
+----------------------------------------
+OUTPUT
+----------------------------------------
+
+Output directory:
+    ../output/emp_files/
+
+Output file:
+    <GENE>_emp.csv
+
+Example:
+    ../output/emp_files/TP53_emp.csv
+
+----------------------------------------
+OUTPUT FILE COLUMNS
+----------------------------------------
+
+Unnamed: 0
+index
+confidence
+norm_confidence
+protein
+
+----------------------------------------
+INTERMEDIATE DATA COLUMNS
+----------------------------------------
+
+The script also builds an internal table containing:
+
+Drug
+clust_testvcontrol
+test_clustvother
+norm_drug
+rank
+significant
+cum_significant
+confidence
+
+----------------------------------------
+OUTPUT DESCRIPTION
+----------------------------------------
+
+The final empirical confidence file summarizes how well Tahoe drug
+perturbation evidence supports STARMAP-ranked drug associations.
+
+Higher norm_confidence:
+    Drugs ranked highly by STARMAP are also showing significant Tahoe
+    TRN response evidence.
+
+Lower norm_confidence:
+    Fewer high-ranked STARMAP drugs are supported by Tahoe response
+    evidence.
+
+
+============================================================
+IMPORTANT NOTES
+============================================================
+
+1. Group naming note:
+    The script uses "clust" to refer to the selected gene-mutant
+    cell-line group. In this Tahoe context, "clust" means mutant
+    cell lines, not NMF structural clusters.
+
+2. DMSO control dependency:
+    Script 2 requires:
+        ssgsea_cluster_all_trns_DMSO_TF.csv
+
+    Make sure the Tahoe pseudobulk directory contains a DMSO_TF input
+    file and that Script 1 successfully generated the DMSO output.
+
+3. TRN mean calculation:
+    Script 2 calculates mean_expr using the first 10 columns of each
+    ssGSEA output file, excluding "Unnamed: 0".
+
+    If there are more than 10 TRNs or if column order changes, this
+    may need to be adjusted.
+
+4. Drug name matching:
+    Drug names are normalized by lowercasing, removing prefixes,
+    removing parentheses, and stripping non-alphanumeric characters.
+    This helps merge Tahoe drug names with STARMAP drug names.
+
+5. Output index note:
+    The final CSV includes an automatically saved pandas index column
+    called "Unnamed: 0" unless index=False is added to to_csv.
+
+
+============================================================
+OVERALL PIPELINE SUMMARY
+============================================================
+
+Input:
+    - Tahoe pseudobulk drug expression profiles
+    - DepMap/Tahoe sample metadata
+    - Somatic mutation annotations
+    - TRN gene-set CSV files
+    - STARMAP sorted drug log-odds rankings
+
+Intermediate outputs:
+    ../output/<GENE>_mut_v_other_perdrug/
+        ssgsea_cluster_all_trns_<DRUG>.csv
+        ssgsea_other_all_trns_<DRUG>.csv
+
+Final output:
+    ../output/emp_files/<GENE>_emp.csv
+
+The full workflow tests whether STARMAP-predicted drug associations
+are supported by Tahoe drug perturbation expression responses in
+cell lines mutated for the selected gene.

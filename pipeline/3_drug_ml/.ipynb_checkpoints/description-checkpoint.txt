@@ -1,0 +1,415 @@
+STARMAP Drug Sensitivity Modeling Pipeline
+Input / Description / Output Specification
+
+This folder contains three scripts that run sequentially:
+
+1. Generate mutation-to-site distance features
+2. Add drug sensitivity labels and cluster annotations
+3. Train per-drug MLP models and save predictions
+
+Recommended order:
+    python 1_generate_distances.py UNIPROT_ID
+    python 2_label_distances.py UNIPROT_ID
+    python 3_train_mlp.py UNIPROT_ID
+
+
+============================================================
+SCRIPT 1: Generate Mutation-to-Site Distance Features
+============================================================
+
+Purpose:
+    This script generates residue-level structural distance features for one
+    protein. It downloads or reuses an AlphaFold PDB file, extracts C-alpha
+    coordinates, and calculates distances from each mutation to annotated
+    active sites and binding sites.
+
+Command:
+    python script.py UNIPROT_ID
+
+Example:
+    python script.py P04637
+
+----------------------------------------
+INPUT
+----------------------------------------
+
+1. Command-line argument:
+    UNIPROT_ID
+
+    Example:
+        P04637
+
+2. Input mutation annotation file:
+    Path:
+        ../data/ParsedMutations_Plus_Sites_Filtered.csv
+
+    Required columns:
+        AlphaFold_IDs
+        ID
+        CELL_LINE
+        SIFT
+        LIKELY_LOF
+        protein_change
+        AA_POS
+        ActiveSitePositions
+        BindingSites
+
+3. AlphaFold structure:
+    The script uses the UniProt ID to download an AlphaFold PDB file from
+    AlphaFold if it is not already present.
+
+    Local structure path after download:
+        ../output/dist_files/<UNIPROT_ID>/<UNIPROT_ID>.pdb
+
+----------------------------------------
+PROCESSING DESCRIPTION
+----------------------------------------
+
+For the selected UniProt ID, the script:
+
+- Filters mutation rows to the selected protein
+- Normalizes AlphaFold IDs to UniProt IDs
+- Downloads the AlphaFold PDB file if needed
+- Parses C-alpha coordinates for each residue
+- Extracts active site positions
+- Extracts binding site positions and binding site ranges
+- Computes distances from each mutation C-alpha coordinate to:
+    - Active site residues
+    - Binding site residues
+    - Binding site range centroids
+- Saves a structural feature table for downstream modeling
+
+----------------------------------------
+OUTPUT
+----------------------------------------
+
+Output directory:
+    ../output/dist_files/<UNIPROT_ID>/
+
+Output files:
+    <UNIPROT_ID>.pdb
+    <UNIPROT_ID>_Distances.csv
+
+Example:
+    ../output/dist_files/P04637/P04637_Distances.csv
+
+----------------------------------------
+OUTPUT FILE COLUMNS
+----------------------------------------
+
+Base columns:
+    ID
+    CELL_LINE
+    SIFT
+    LIKELY_LOF
+    protein_change
+
+Mutation coordinate columns:
+    Mut_CA_x
+    Mut_CA_y
+    Mut_CA_z
+
+Active site distance columns:
+    DTAS_<POSITION>
+
+Active site coordinate columns:
+    AS_<POSITION>_x
+    AS_<POSITION>_y
+    AS_<POSITION>_z
+
+Binding site distance columns:
+    DTBS_<POSITION>
+
+Binding site coordinate columns:
+    BS_<POSITION>_x
+    BS_<POSITION>_y
+    BS_<POSITION>_z
+
+Binding site range distance columns:
+    DTBSR_<START>-<END>
+
+Binding site range centroid coordinate columns:
+    BSR_<START>-<END>_x
+    BSR_<START>-<END>_y
+    BSR_<START>-<END>_z
+
+
+============================================================
+SCRIPT 2: Add Drug Sensitivity Labels and Cluster Annotations
+============================================================
+
+Purpose:
+    This script merges structural distance features with CCLE/CTRP drug
+    sensitivity data. It labels each mutation-drug pair as sensitive or not
+    sensitive using the drug-specific 25th percentile AUC threshold. It also
+    adds residue cluster annotations using a UniProt/residue/cluster mapping.
+
+Command:
+    python script.py UNIPROT_ID
+
+Example:
+    python script.py P04637
+
+----------------------------------------
+INPUT
+----------------------------------------
+
+1. Command-line argument:
+    UNIPROT_ID
+
+    Example:
+        P04637
+
+2. Distance feature file from Script 1:
+    Path:
+        ../output/dist_files/<UNIPROT_ID>/<UNIPROT_ID>_Distances.csv
+
+    Required columns:
+        ID
+        protein_change
+
+3. Drug sensitivity file:
+    Path:
+        ../data/CCLE_cell_line_drugsensitivity_10072023.csv
+
+    Required columns:
+        cell_line
+        drug
+        AUC_CTRP
+
+4. Residue-to-cluster mapping file:
+    Path:
+        ../data/gene_uniprot_res_clust.csv
+
+    Required columns:
+        uniprot_ID
+        gene
+        res
+        clust
+
+----------------------------------------
+PROCESSING DESCRIPTION
+----------------------------------------
+
+For the selected UniProt ID, the script:
+
+- Reads the distance feature table from Script 1
+- Reads CCLE/CTRP drug sensitivity data
+- Computes the 25th percentile AUC_CTRP value for each drug
+- Merges distance features with drug sensitivity data by cell line
+- Labels rows as:
+    sensitive      if AUC_CTRP <= drug-specific 25th percentile
+    not sensitive  otherwise
+- Extracts residue position from protein_change
+- Maps each residue to an NMF cluster using gene_uniprot_res_clust.csv
+- Saves both a full labeled CSV and a filtered parquet file for modeling
+
+----------------------------------------
+OUTPUT
+----------------------------------------
+
+Output directory:
+    ../output/dist_files/<UNIPROT_ID>/
+
+Output files:
+    <UNIPROT_ID>_Distances_Labeled.csv
+    <UNIPROT_ID>_Distances_Labeled.parquet
+
+Example:
+    ../output/dist_files/P04637/P04637_Distances_Labeled.csv
+    ../output/dist_files/P04637/P04637_Distances_Labeled.parquet
+
+----------------------------------------
+OUTPUT FILE COLUMNS
+----------------------------------------
+
+The labeled output contains:
+
+- All columns from <UNIPROT_ID>_Distances.csv
+- drug
+- AUC_CTRP
+- sensitivity
+- clust
+
+The parquet file keeps rows with available AUC_CTRP values and is used as
+the main input for MLP training.
+
+
+============================================================
+SCRIPT 3: Train Per-Drug MLP Models
+============================================================
+
+Purpose:
+    This script trains a separate MLP classifier for each drug associated
+    with the selected protein. The model predicts binary drug sensitivity
+    using mutation-to-site distance features, mutation coordinates, and
+    optional cluster one-hot features.
+
+Command:
+    python script.py UNIPROT_ID
+
+Example:
+    python script.py P04637
+
+----------------------------------------
+INPUT
+----------------------------------------
+
+1. Command-line argument:
+    UNIPROT_ID
+
+    Example:
+        P04637
+
+2. Labeled distance file from Script 2:
+    Preferred path:
+        ../output/dist_files/<UNIPROT_ID>/<UNIPROT_ID>_Distances_Labeled.parquet
+
+    Fallback path:
+        ../output/dist_files/<UNIPROT_ID>/<UNIPROT_ID>_Distances_Labeled.csv
+
+    Required columns:
+        CELL_LINE
+        protein_change
+        drug
+        AUC_CTRP
+        sensitivity
+        clust
+
+    Required feature columns include numeric structural features such as:
+        Mut_CA_x
+        Mut_CA_y
+        Mut_CA_z
+        DTAS_<POSITION>
+        DTBS_<POSITION>
+        DTBSR_<START>-<END>
+        AS_<POSITION>_x/y/z
+        BS_<POSITION>_x/y/z
+        BSR_<START>-<END>_x/y/z
+
+----------------------------------------
+PROCESSING DESCRIPTION
+----------------------------------------
+
+For the selected UniProt ID, the script:
+
+- Loads the labeled distance dataset
+- Adds one-hot encoded cluster features if clust is available
+- Selects numeric model features from:
+    - Mutation C-alpha coordinates
+    - Distances to active sites
+    - Distances to binding sites
+    - Binding site range centroid distances
+    - Active/binding site coordinates
+    - Cluster dummy variables
+- Loops through each drug
+- Converts sensitivity labels to binary:
+    sensitive      = 1
+    not sensitive  = 0
+- Applies screening filters:
+    - At least 20 total samples
+    - At least 5 samples per class
+    - At least 4 cell-line groups
+    - Both classes represented across groups
+- Uses group-aware train/test splitting by CELL_LINE
+- Uses GroupKFold cross-validation within the training set
+- Trains an MLP classifier with:
+    - StandardScaler
+    - PyTorch/skorch MLP
+    - BCEWithLogitsLoss
+    - Early stopping
+- Saves predictions, model file, and performance report per drug
+
+----------------------------------------
+OUTPUT
+----------------------------------------
+
+Main output directory:
+    ../output/MLP_outputs/<UNIPROT_ID>/<DRUG>/
+
+Example:
+    ../output/MLP_outputs/P04637/paclitaxel/
+
+Output files per drug:
+    mlp_predictions.csv
+    mlp_model.joblib
+    mlp_report.txt
+
+If a drug is skipped, the folder may contain:
+    screen_skipped.txt
+    split_skipped.txt
+    train_single_class.txt
+
+----------------------------------------
+OUTPUT FILE COLUMNS: mlp_predictions.csv
+----------------------------------------
+
+protein_id
+residue_position
+drug_id
+model
+observed_label
+y_pred_binary
+y_score
+dataset_split
+fold_id
+run_id
+CELL_LINE
+protein_change
+
+----------------------------------------
+OUTPUT FILE DESCRIPTION
+----------------------------------------
+
+mlp_predictions.csv:
+    Contains out-of-fold and holdout predictions for each mutation-drug
+    example. y_score is the model-predicted sensitivity probability.
+
+mlp_model.joblib:
+    Saved trained MLP pipeline for the drug.
+
+mlp_report.txt:
+    Text report containing:
+        Protein
+        Drug
+        Test AUPRC
+        Test F1
+        Brier score
+        Train/test sample sizes
+        Train/test group counts
+        Confusion matrix
+        Classification report
+
+screen_skipped.txt:
+    Created when a drug does not pass minimum sample, class, or group filters.
+
+split_skipped.txt:
+    Created when a valid group-aware train/test split cannot be formed.
+
+train_single_class.txt:
+    Created when the training split contains only one class.
+
+
+============================================================
+OVERALL PIPELINE SUMMARY
+============================================================
+
+Input:
+    A UniProt ID and mutation/drug/structure annotation files.
+
+Intermediate outputs:
+    1. Structural distance features:
+        ../output/dist_files/<UNIPROT_ID>/<UNIPROT_ID>_Distances.csv
+
+    2. Drug-labeled distance features:
+        ../output/dist_files/<UNIPROT_ID>/<UNIPROT_ID>_Distances_Labeled.csv
+        ../output/dist_files/<UNIPROT_ID>/<UNIPROT_ID>_Distances_Labeled.parquet
+
+Final outputs:
+    Per-drug MLP model results:
+        ../output/MLP_outputs/<UNIPROT_ID>/<DRUG>/
+
+The full workflow converts protein mutation annotations into structural
+features, links those features to drug sensitivity labels, and trains
+drug-specific classifiers to predict sensitivity from mutation position
+and structural context.

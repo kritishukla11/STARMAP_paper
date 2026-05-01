@@ -1,0 +1,120 @@
+STARMAP Gi* (Getis-Ord) TRN Mapping Pipeline
+Input / Output Specification
+
+----------------------------------------
+INPUT
+----------------------------------------
+
+1. Command-line argument:
+   - Gene name (string)
+   - Example:
+       python script.py TP53
+
+2. Required input files:
+
+   (a) NMF output (from previous step)
+       Path:
+           ../../1_nmf/output/<FIRST_LETTER>/<GENE>_nmfinfo_final.csv
+
+       Required columns:
+           res
+           x_axis
+           y_axis
+           altitude
+           clust
+
+   (b) Gene-position + cell line mapping
+       Path:
+           ../data/ccle_gene_position_cellline.csv
+
+       Required columns:
+           gene
+           position
+           Tumor_Sample_Barcode
+
+   (c) GSEA pathway files
+       Directory:
+           ../data/GSEA_files/
+
+       File pattern:
+           *_GSEA.csv
+
+       Required format:
+           - Rows indexed by Tumor_Sample_Barcode
+           - At least one column containing GSEA scores
+
+----------------------------------------
+PROCESSING SUMMARY
+----------------------------------------
+
+For each pathway (TRN):
+
+- Maps GSEA scores from cell lines → residue positions
+- Aligns GSEA values with NMF residue coordinates
+- Expands multi-value GSEA entries into numeric columns
+- Converts residue coordinates into spatial (GeoJSON) format
+- Computes spatial statistics:
+    - Queen contiguity neighborhood graph
+    - Local Getis-Ord Gi* Z-scores per GSEA column
+- Aggregates:
+    - Gi_sum = sum of Gi* across all GSEA columns
+- Maps Gi_sum back to clusters
+- Computes:
+    - Mean Gi_sum per cluster
+    - Count of positive Gi_sum residues per cluster
+
+----------------------------------------
+OUTPUT
+----------------------------------------
+
+1. Spatial residue-level outputs (per gene + TRN):
+
+   Directory:
+       ../output/3D_files/<FIRST_LETTER>/
+
+   Files:
+       <GENE>_<TRN>_gdf.csv.gz
+
+   Description:
+       Residue-level table containing:
+           - x/y coordinates
+           - GSEA values
+           - Gi* scores per pathway column
+           - Gi_sum (aggregate spatial signal)
+
+----------------------------------------
+
+2. Cluster-level TRN scores:
+
+   Directory:
+       ../output/scores/<FIRST_LETTER>/
+
+   File:
+       <GENE>_scores_all_trns.csv
+
+----------------------------------------
+OUTPUT FILE COLUMNS (scores file)
+----------------------------------------
+
+scores        : List of mean Gi_sum values per cluster
+counts        : List of counts of residues with Gi_sum > 0 per cluster
+gene          : Gene name
+trn           : Pathway / TRN name
+pathway_file  : Source GSEA file name
+
+----------------------------------------
+OUTPUT DESCRIPTION
+----------------------------------------
+
+This pipeline maps transcriptional regulatory network (TRN)
+activity onto protein structure:
+
+- Residues are assigned GSEA-based activity scores
+- Spatial clustering is evaluated using Gi* statistics
+- Clusters with high Gi_sum indicate spatially localized
+  transcriptional activity
+
+Outputs are used for:
+- TRN structural mapping
+- Downstream enrichment and visualization
+- Drug association analyses

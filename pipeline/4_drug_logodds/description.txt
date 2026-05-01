@@ -1,0 +1,149 @@
+STARMAP Log-Odds (Fisher Exact) Analysis Pipeline
+Input / Output Specification
+
+----------------------------------------
+INPUT
+----------------------------------------
+
+1. Command-line argument:
+    UNIPROT_ID
+
+    Example:
+        python script.py P04637
+
+----------------------------------------
+
+2. MLP prediction outputs (from previous step)
+
+    Root directory:
+        ../../3_drug_ml/output/MLP_outputs/<UNIPROT_ID>/
+
+    Expected structure:
+        <UNIPROT_ID>/<DRUG>/mlp_predictions.csv
+
+    Required columns in prediction file:
+        residue_position
+        y_pred_binary OR observed_label
+
+----------------------------------------
+
+3. NMF cluster mapping
+
+    Path:
+        ../../1_nmf/output/<FIRST_LETTER>/<GENE>_nmfinfo_final.csv
+
+    Required columns:
+        res
+        clust
+
+----------------------------------------
+
+4. UniProt → Gene mapping
+
+    Path:
+        ../data/uniprot_gene_map.csv
+
+    Required columns:
+        uniprot_id
+        gene
+
+----------------------------------------
+PROCESSING SUMMARY
+----------------------------------------
+
+For each UniProt ID:
+
+- Map UniProt ID → gene name
+- Load NMF cluster assignments for that gene
+- Loop over all drug folders in MLP output
+- For each drug:
+    - Load model predictions
+    - Convert predictions to binary (>= 0.90 threshold after averaging)
+    - Merge predictions with cluster assignments
+    - Group data by:
+        - protein
+        - residue
+        - cluster
+        - drug
+
+- For each cluster:
+    - Define contingency table:
+        a = predicted positives inside cluster
+        b = predicted negatives inside cluster
+        c = predicted positives outside cluster
+        d = predicted negatives outside cluster
+
+    - Perform Fisher’s exact test:
+        oddsratio = fisher_exact([[a, b], [c, d]])
+
+    - Convert to log2 odds:
+        log2_odds = log2(oddsratio)
+
+    - Cap infinite values at ±6
+
+----------------------------------------
+OUTPUT
+----------------------------------------
+
+1. Per-drug log-odds results
+
+    Directory:
+        ../output/logodds_results/<GENE>/
+
+    Files:
+        <GENE>_<DRUG>_logodds.csv
+
+    Example:
+        TP53_paclitaxel_logodds.csv
+
+----------------------------------------
+
+2. Summary rankings across drugs
+
+    Files:
+        sorted_mlp.csv
+
+    Description:
+        For each drug:
+        - Takes maximum log2 odds across clusters
+        - Sorts drugs by strongest enrichment signal
+
+----------------------------------------
+OUTPUT FILE COLUMNS
+----------------------------------------
+
+Per-drug file (<GENE>_<DRUG>_logodds.csv):
+
+    cluster_id
+    mlp   (log2 odds ratio)
+
+----------------------------------------
+
+Sorted summary file (sorted_mlp.csv):
+
+    drug
+    model
+    log2_odds_ratio
+
+----------------------------------------
+OUTPUT DESCRIPTION
+----------------------------------------
+
+This step converts model predictions into interpretable
+cluster-level signals:
+
+- Identifies which structural clusters are enriched for
+  predicted drug sensitivity
+- Uses Fisher’s exact test to quantify enrichment
+- Produces log2 odds ratios per cluster
+
+High positive log2 odds:
+    Cluster enriched for predicted sensitive mutations
+
+Negative log2 odds:
+    Cluster depleted for sensitivity
+
+Outputs are used for:
+- Structural interpretation of drug response
+- Flatmap visualization coloring (e.g., red/blue)
+- Downstream biological interpretation

@@ -1,0 +1,4 @@
+*.parquet filter=lfs diff=lfs merge=lfs -text
+*.csv filter=lfs diff=lfs merge=lfs -text
+*.mtx filter=lfs diff=lfs merge=lfs -text
+main_figures/Fig6/Panel_G_H/string_analysis/9606.protein.links.detailed.v12.0.txt.gz filter=lfs diff=lfs merge=lfs -text

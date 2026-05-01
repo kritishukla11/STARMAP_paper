@@ -1,0 +1,216 @@
+Classical ML TRN Classification Pipeline
+Input / Output Specification
+
+----------------------------------------
+OVERVIEW
+----------------------------------------
+
+This script trains a Random Forest classifier for each TRN
+(Transcriptional Regulatory Network) using precomputed feature data.
+
+It is designed to be run as a SLURM array job, where each task processes
+one TRN.
+
+Core steps:
+- Load per-TRN feature file
+- Balance classes via oversampling
+- Train Random Forest model
+- Perform cross-validation
+- Save performance metrics
+
+
+----------------------------------------
+USAGE
+----------------------------------------
+
+Single run (local testing):
+
+    python ML-script.py --trn-index 0
+
+
+SLURM array run (recommended):
+
+    sbatch run_rf_trn.slurm
+
+Where each array task processes one TRN.
+
+
+----------------------------------------
+SLURM CONFIGURATION
+----------------------------------------
+
+Example SLURM script:
+
+    #SBATCH --array=0-229
+
+This means:
+    - Total TRNs = 230
+    - Each task uses:
+        trn-index = SLURM_ARRAY_TASK_ID
+
+So:
+    Task 0 → TRN index 0
+    Task 1 → TRN index 1
+    ...
+    Task 229 → TRN index 229
+
+Logs:
+    logs/rf_trn_<JOBID>_<TASKID>.out
+    logs/rf_trn_<JOBID>_<TASKID>.err
+
+
+----------------------------------------
+INPUT
+----------------------------------------
+
+1. TRN list file
+
+    Path:
+        ../data/TRNs_for_classicalML.csv
+
+    Required column:
+        Column specified by --trn-col (default "0")
+
+    Description:
+        Contains list of TRN names. Each SLURM task selects one TRN
+        using its index.
+
+
+----------------------------------------
+
+2. Per-TRN feature file
+
+    Path:
+        ../data/ML_outputs/<TRN_NAME>_ML_outputs.csv
+
+    Required columns:
+
+        x        : numeric feature
+        y        : numeric feature
+        z        : numeric feature
+        cluster  : cluster label (numeric)
+        dist     : distance feature
+        class    : binary label (target)
+
+    Description:
+        Each row represents one observation used for classification.
+
+
+----------------------------------------
+PROCESSING SUMMARY
+----------------------------------------
+
+For each TRN:
+
+1. Load dataset
+2. Validate required columns
+3. Balance dataset:
+    - Identify minority class
+    - Oversample minority class to match majority
+4. Shuffle data
+5. Define:
+    X = [x, y, z, cluster, dist]
+    y = class
+6. Train Random Forest:
+    - n_estimators = 50 (default)
+    - class_weight = "balanced"
+7. Perform cross-validation:
+    - Default: 3-fold CV
+8. Compute metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1_score
+    - MCC (Matthews correlation coefficient)
+9. Save results
+
+
+----------------------------------------
+OUTPUT
+----------------------------------------
+
+Output directory:
+    ../data/scores_outputs/
+
+Output file:
+    <TRN_NAME>_ML_outputs.csv
+
+
+----------------------------------------
+OUTPUT FILE CONTENTS
+----------------------------------------
+
+Each row = one CV fold
+
+Columns include:
+
+    fit_time
+    score_time
+
+    test_accuracy
+    test_precision
+    test_recall
+    test_f1_score
+    test_mcc
+
+    train_accuracy
+    train_precision
+    train_recall
+    train_f1_score
+    train_mcc
+
+
+----------------------------------------
+STATUS VALUES
+----------------------------------------
+
+Each task prints:
+
+    TRN=<TRN_NAME>    STATUS=<STATUS>
+
+Possible STATUS values:
+
+    ok
+        Successfully completed
+
+    skipped_exists
+        Output file already exists (useful for resumable jobs)
+
+    missing_input
+        Input file not found
+
+    missing_cols:<cols>
+        Required columns missing
+
+    one_class_after_balance
+        Only one class present after balancing
+
+
+----------------------------------------
+OUTPUT DESCRIPTION
+----------------------------------------
+
+This script evaluates how well structural or feature-based inputs
+predict a binary class label for each TRN.
+
+Metric interpretation:
+
+    accuracy   : overall correctness
+    precision  : fraction of correct positive predictions
+    recall     : sensitivity to positives
+    f1_score   : balance between precision and recall
+    mcc        : robust metric for imbalanced datasets
+
+Outputs can be aggregated across TRNs to compare predictive performance.
+
+
+----------------------------------------
+PARALLELIZATION STRATEGY
+----------------------------------------
+
+- Each TRN is independent
+- SLURM array distributes TRNs across jobs
+- Safe to rerun:
+    existing outputs are skipped automatically
+
+This allows scalable processing across hundreds of TRNs.

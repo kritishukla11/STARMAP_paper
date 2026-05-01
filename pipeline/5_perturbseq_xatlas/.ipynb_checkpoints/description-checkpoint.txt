@@ -1,0 +1,400 @@
+STARMAP Perturb-seq / X-Atlas Validation Pipeline
+Input / Description / Output Specification
+
+This folder contains four scripts that run sequentially:
+
+1. Download X-Atlas / Perturb-seq files from Figshare
+2. Compute TRN gene-set mean scores per cell
+3. Compare perturbed vs control cells for one gene
+4. Rank Perturb-seq pathway significance against STARMAP Gi* pathway rankings
+
+Recommended order:
+    python 1_download_xatlas.py
+    python 2_compute_geneset_means.py
+    python 3_perturbseq_stats.py GENE
+    python 4_build_confidence_rank.py GENE
+
+
+============================================================
+SCRIPT 1: Download X-Atlas Files from Figshare
+============================================================
+
+Purpose:
+    This script downloads all files associated with the X-Atlas Figshare
+    article into a local data directory.
+
+Command:
+    python script.py
+
+----------------------------------------
+INPUT
+----------------------------------------
+
+1. Figshare API article ID:
+    ITEM_ID = 29190726
+
+2. Figshare API base URL:
+    https://api.figshare.com/v2
+
+No command-line argument is required.
+
+----------------------------------------
+PROCESSING DESCRIPTION
+----------------------------------------
+
+The script:
+
+- Queries Figshare metadata for the selected article
+- Prints the article title and number of attached files
+- Loops through all files listed in the article metadata
+- Downloads each file using its Figshare download URL
+- Saves all downloaded files locally
+
+----------------------------------------
+OUTPUT
+----------------------------------------
+
+Output directory:
+    ../data/downloads/
+
+Output files:
+    All files attached to the Figshare article.
+
+Example expected downstream file:
+    ../data/downloads/HCT116_filtered_dual_guide_cells.h5ad
+
+
+============================================================
+SCRIPT 2: Compute TRN Gene-Set Mean Scores Per Cell
+============================================================
+
+Purpose:
+    This script computes per-cell mean expression scores for each TRN
+    gene set using the downloaded HCT116 Perturb-seq dataset.
+
+Command:
+    python script.py
+
+----------------------------------------
+INPUT
+----------------------------------------
+
+1. TRN gene-set CSV files:
+    Directory:
+        ../data/trn_gene_sets/
+
+    Expected format:
+        One CSV per gene set.
+
+    Required format:
+        First column contains gene symbols.
+
+    Example:
+        TEAD2_geneset.csv
+        NRF2_geneset.csv
+
+2. Perturb-seq AnnData file:
+    Path:
+        ../data/downloads/HCT116_filtered_dual_guide_cells.h5ad
+
+    Required contents:
+        adata.X          expression matrix
+        adata.var_names  gene names
+        adata.obs_names  cell IDs
+
+----------------------------------------
+PROCESSING DESCRIPTION
+----------------------------------------
+
+The script:
+
+- Loads all TRN gene sets from CSV files
+- Builds a sparse gene-by-gene-set weight matrix
+- Loads the HCT116 Perturb-seq AnnData object in backed mode
+- Streams through cells in chunks of 50,000
+- Computes mean expression of each gene set per cell
+- Writes chunk-level parquet files
+- Merges all chunks into one final parquet file
+
+----------------------------------------
+OUTPUT
+----------------------------------------
+
+Chunk output directory:
+    geneset_chunks/
+
+Chunk files:
+    geneset_means_chunk0.parquet
+    geneset_means_chunk1.parquet
+    ...
+
+Final output file:
+    geneset_means.parquet
+
+Recommended pipeline location:
+    ../output/geneset_means.parquet
+
+Note:
+    Script 3 expects the final file at:
+        ../output/geneset_means.parquet
+
+    If Script 2 writes it in the current directory, move or write it to
+    ../output/geneset_means.parquet before running Script 3.
+
+----------------------------------------
+OUTPUT FILE COLUMNS
+----------------------------------------
+
+cell_id
+<GENESET_1>
+<GENESET_2>
+...
+<GENESET_N>
+
+Each gene-set column contains the mean expression score for that TRN
+gene set in each cell.
+
+
+============================================================
+SCRIPT 3: Perturbed vs Control TRN Statistics
+============================================================
+
+Purpose:
+    This script tests whether TRN gene-set scores differ between cells
+    perturbed for a target gene and control cells.
+
+Command:
+    python script.py GENE
+
+Example:
+    python script.py TP53
+
+----------------------------------------
+INPUT
+----------------------------------------
+
+1. Command-line argument:
+    GENE
+
+    Example:
+        TP53
+
+2. Gene-set score file from Script 2:
+    Path:
+        ../output/geneset_means.parquet
+
+    Required columns:
+        cell_id
+        one column per pathway / TRN gene set
+
+3. Perturb-seq AnnData file:
+    Path:
+        ../data/downloads/HCT116_filtered_dual_guide_cells.h5ad
+
+    Required obs metadata columns:
+        sample
+        num_features
+        guide_target
+        gene_target
+        n_genes_by_counts
+        total_counts
+        total_counts_mt
+        pct_counts_mt
+        pass_guide_filter
+
+----------------------------------------
+PROCESSING DESCRIPTION
+----------------------------------------
+
+For the selected gene, the script:
+
+- Loads per-cell TRN gene-set scores
+- Loads Perturb-seq metadata
+- Merges scores with cell metadata by cell_id
+- Identifies cells where gene_target equals the selected gene
+- Uses non-targeting cells as controls when available
+- Falls back to all other guide-filtered cells if non-targeting controls
+  are unavailable
+- Requires at least 5 perturbed and 5 control cells
+- Computes, for every pathway:
+    - Mean score difference:
+        delta = mean(perturbed) - mean(control)
+    - Welch's t-test p-value
+
+----------------------------------------
+OUTPUT
+----------------------------------------
+
+Output file:
+    ../output/<GENE>_perturbed_df.csv
+
+Example:
+    ../output/TP53_perturbed_df.csv
+
+----------------------------------------
+OUTPUT FILE COLUMNS
+----------------------------------------
+
+gene
+pathway
+delta
+pval
+n_pert
+n_ctrl
+
+----------------------------------------
+OUTPUT DESCRIPTION
+----------------------------------------
+
+This output reports how each TRN pathway changes when the target gene is
+perturbed in HCT116 cells.
+
+Positive delta:
+    Higher pathway score in perturbed cells than controls.
+
+Negative delta:
+    Lower pathway score in perturbed cells than controls.
+
+Small p-value:
+    Stronger evidence that the pathway differs between perturbed and
+    control cells.
+
+
+============================================================
+SCRIPT 4: Build STARMAP-to-Perturb-seq Confidence Ranking
+============================================================
+
+Purpose:
+    This script compares Perturb-seq pathway significance against the
+    STARMAP Gi* pathway ranking for the same gene. It creates a ranked
+    confidence table showing how often significant Perturb-seq pathways
+    appear near the top of the STARMAP ranking.
+
+Command:
+    python script.py GENE
+
+Example:
+    python script.py TP53
+
+----------------------------------------
+INPUT
+----------------------------------------
+
+1. Command-line argument:
+    GENE
+
+    Example:
+        TP53
+
+2. Perturb-seq statistics file from Script 3:
+    Path:
+        ../output/<GENE>_perturbed_df.csv
+
+    Required columns:
+        gene
+        pathway
+        delta
+        pval
+        n_pert
+        n_ctrl
+
+3. STARMAP Gi* score file:
+    Path:
+        ../../2_gistar/output/scores/<FIRST_LETTER>/<GENE>_scores_all_trns.csv
+
+    Required columns:
+        scores
+        pathway_file
+
+    Expected format:
+        scores is stored as a list-like string, for example:
+            [0.12, 0.34, 0.05]
+
+        pathway_file is a GSEA filename, for example:
+            TEAD2_GSEA.csv
+
+----------------------------------------
+PROCESSING DESCRIPTION
+----------------------------------------
+
+For the selected gene, the script:
+
+- Loads the Perturb-seq differential pathway file
+- Cleans pathway names by removing '_geneset'
+- Loads the STARMAP Gi* scores file
+- Expands the list of cluster-level scores into columns:
+    score_1, score_2, ...
+- Computes score_max as the maximum Gi* score across clusters
+- Ranks pathways by score_max from highest to lowest
+- Keeps pathways present in both:
+    - Perturb-seq output
+    - STARMAP Gi* output
+- Assigns adjusted_rank based on STARMAP ranking
+- Marks pathways as significant if:
+    pval < 0.05
+- Computes cumulative confidence:
+    confidence = cumulative significant pathways / adjusted rank
+- Normalizes confidence values for downstream plotting
+
+----------------------------------------
+OUTPUT
+----------------------------------------
+
+Output file:
+    ../output/<GENE>_sub.csv
+
+Example:
+    ../output/TP53_sub.csv
+
+----------------------------------------
+OUTPUT FILE COLUMNS
+----------------------------------------
+
+pathway
+adjusted_rank
+gene
+delta
+pval
+n_pert
+n_ctrl
+significant
+cum_significant
+confidence
+
+----------------------------------------
+OUTPUT DESCRIPTION
+----------------------------------------
+
+This file is used to evaluate whether STARMAP-ranked TRNs are supported
+by Perturb-seq evidence.
+
+High confidence near low adjusted_rank:
+    Significant Perturb-seq pathways are appearing near the top of the
+    STARMAP Gi* ranking.
+
+Low or zero confidence:
+    Few significant Perturb-seq pathways overlap with highly ranked
+    STARMAP pathways.
+
+============================================================
+OVERALL PIPELINE SUMMARY
+============================================================
+
+Input:
+    - X-Atlas / Perturb-seq HCT116 h5ad file
+    - TRN gene-set CSV files
+    - STARMAP Gi* scores from the structural pathway mapping pipeline
+    - A target gene name
+
+Intermediate outputs:
+    - Downloaded X-Atlas files
+    - Per-cell TRN gene-set scores
+    - Perturbed-vs-control pathway statistics
+
+Final output:
+    ../output/<GENE>_sub.csv
+
+The full workflow links Perturb-seq experimental evidence to STARMAP
+TRN rankings by asking whether pathways ranked highly by structural
+Gi* scores are also significantly altered when the target gene is
+perturbed.

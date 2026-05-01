@@ -1,0 +1,83 @@
+STARMAP NMF + MDS Pipeline
+Input / Output Specification
+
+----------------------------------------
+INPUT
+----------------------------------------
+
+1. Command-line argument:
+   - Gene name (string)
+   - Example:
+       python script.py TP53
+
+2. Input file:
+   Path:
+       ../data/3Dcoord_allgenes.csv
+
+   Required columns:
+       gene      : Gene/protein name
+       x_coord   : X coordinate (3D structure)
+       y_coord   : Y coordinate (3D structure)
+       z_coord   : Z coordinate (3D structure)
+       res       : Residue identifier
+
+   Description:
+       This file contains 3D structural coordinates for residues across proteins.
+       The script subsets this file to the specified gene.
+
+----------------------------------------
+PROCESSING SUMMARY
+----------------------------------------
+
+- Subsets input data to selected gene
+- Performs rank-mean normalization
+- Applies min-max scaling
+- Runs Non-negative Matrix Factorization (NMF)
+    - Automatically selects optimal number of components (k = 3–6)
+- Computes:
+    - Residue-level component activations
+    - "Altitude" = inverse mean activation
+- Computes pairwise distances and applies:
+    - Multidimensional Scaling (MDS) → 2D embedding
+- Performs KMeans clustering in 2D space
+
+----------------------------------------
+OUTPUT
+----------------------------------------
+
+Output directory:
+    ../output/<FIRST_LETTER_OF_GENE>/
+
+Example:
+    ../output/T/
+
+Output file:
+    <GENE>_nmfinfo_final.csv
+
+Example:
+    TP53_nmfinfo_final.csv
+
+----------------------------------------
+OUTPUT FILE COLUMNS
+----------------------------------------
+
+res        : Residue identifier
+x_axis     : 2D embedding (MDS), scaled 0–1
+y_axis     : 2D embedding (MDS), scaled 0–1
+altitude   : 1 - mean(NMF component activations)
+clust      : Cluster assignment (KMeans, k = optimal NMF components)
+
+----------------------------------------
+OUTPUT DESCRIPTION
+----------------------------------------
+
+The output represents a 2D structural "flatmap" of the protein:
+
+- Residues are embedded into 2D space based on structural similarity
+- Clusters represent regions of functional similarity
+- Altitude captures relative activation across latent components
+
+This file is used downstream for:
+- Visualization (flatmaps)
+- Spatial statistics (e.g., Gi*)
+- Drug association analyses

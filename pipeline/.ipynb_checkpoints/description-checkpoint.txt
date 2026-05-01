@@ -1,0 +1,407 @@
+STARMAP Pipeline Overview
+High-Level Input / Output Specification
+
+STARMAP is a multi-stage pipeline for mapping protein structural variation
+to transcriptional regulatory network (TRN) activity and drug response.
+
+The full workflow integrates:
+
+- 3D protein structural coordinates
+- residue-level mutation annotations
+- TRN gene sets
+- CCLE/DepMap mutation and drug sensitivity data
+- MLP-based drug sensitivity predictions
+- Gi* spatial statistics
+- Perturb-seq/X-Atlas validation
+- Tahoe drug perturbation validation
+
+The pipeline produces residue-level structural flatmaps, spatial TRN scores,
+drug-response models, cluster-level drug enrichment scores, and experimental
+validation confidence files.
+
+
+============================================================
+OVERALL PIPELINE ORDER
+============================================================
+
+1. NMF Structural Flatmap Generation
+2. Gi* TRN Spatial Mapping
+3. Drug ML Feature Generation and MLP Training
+4. Drug Log-Odds Enrichment Analysis
+5. Perturb-seq / X-Atlas Experimental Validation
+6. Tahoe Drug Perturbation Validation
+
+
+============================================================
+1. NMF STRUCTURAL FLATMAP GENERATION
+============================================================
+
+Purpose:
+    Converts 3D protein residue coordinates into a 2D structural flatmap.
+
+Main input:
+    ../data/3Dcoord_allgenes.csv
+
+Required information:
+    - gene name
+    - residue identifier
+    - x/y/z structural coordinates
+
+Main output:
+    ../output/<FIRST_LETTER>/<GENE>_nmfinfo_final.csv
+
+Output description:
+    One row per residue with:
+        - 2D flatmap coordinates
+        - altitude
+        - NMF/KMeans cluster assignment
+
+Used by:
+    - Gi* TRN mapping
+    - drug log-odds cluster mapping
+    - downstream visualization
+
+
+============================================================
+2. Gi* TRN SPATIAL MAPPING
+============================================================
+
+Purpose:
+    Maps TRN/GSEA activity onto protein structural flatmaps and identifies
+    spatially localized TRN signal using Getis-Ord Gi* statistics.
+
+Main inputs:
+    - NMF flatmap output from Step 1
+    - ../data/ccle_gene_position_cellline.csv
+    - ../data/GSEA_files/*_GSEA.csv
+
+Main outputs:
+    ../output/3D_files/<FIRST_LETTER>/<GENE>_<TRN>_gdf.csv.gz
+    ../output/scores/<FIRST_LETTER>/<GENE>_scores_all_trns.csv
+
+Output description:
+    - Residue-level spatial Gi* scores
+    - Cluster-level TRN scores
+    - Counts of residues with positive Gi* signal
+
+Used by:
+    - Perturb-seq validation ranking
+    - pathway interpretation
+    - structural TRN visualization
+
+
+============================================================
+3. DRUG ML FEATURE GENERATION AND MLP TRAINING
+============================================================
+
+Purpose:
+    Builds mutation-level structural features, labels mutation-drug pairs
+    by drug sensitivity, and trains per-drug MLP classifiers.
+
+This stage has three substeps:
+
+A. Distance feature generation
+B. Drug sensitivity labeling
+C. MLP model training
+
+------------------------------------------------------------
+3A. Distance Feature Generation
+------------------------------------------------------------
+
+Main inputs:
+    - UniProt ID
+    - ../data/ParsedMutations_Plus_Sites_Filtered.csv
+    - AlphaFold PDB structure, downloaded automatically if needed
+
+Main output:
+    ../output/dist_files/<UNIPROT_ID>/<UNIPROT_ID>_Distances.csv
+
+Output description:
+    Mutation-level structural features including:
+        - mutation C-alpha coordinates
+        - distances to active sites
+        - distances to binding sites
+        - binding-site range centroid distances
+
+------------------------------------------------------------
+3B. Drug Sensitivity Labeling
+------------------------------------------------------------
+
+Main inputs:
+    - distance feature file from Step 3A
+    - ../data/CCLE_cell_line_drugsensitivity_10072023.csv
+    - ../data/gene_uniprot_res_clust.csv
+
+Main outputs:
+    ../output/dist_files/<UNIPROT_ID>/<UNIPROT_ID>_Distances_Labeled.csv
+    ../output/dist_files/<UNIPROT_ID>/<UNIPROT_ID>_Distances_Labeled.parquet
+
+Output description:
+    Adds:
+        - drug
+        - AUC_CTRP
+        - binary sensitivity label
+        - structural cluster assignment
+
+------------------------------------------------------------
+3C. MLP Model Training
+------------------------------------------------------------
+
+Main input:
+    Labeled distance file from Step 3B
+
+Main output:
+    ../output/MLP_outputs/<UNIPROT_ID>/<DRUG>/
+
+Output files per drug:
+    - mlp_predictions.csv
+    - mlp_model.joblib
+    - mlp_report.txt
+
+Output description:
+    Per-drug model outputs containing:
+        - predicted sensitivity labels
+        - predicted sensitivity scores
+        - observed labels
+        - holdout and cross-validation predictions
+        - model performance metrics
+
+Used by:
+    - drug log-odds enrichment analysis
+
+
+============================================================
+4. DRUG LOG-ODDS ENRICHMENT ANALYSIS
+============================================================
+
+Purpose:
+    Converts MLP predictions into cluster-level drug enrichment scores.
+
+Main inputs:
+    - MLP predictions from Step 3C
+    - NMF cluster assignments from Step 1
+    - ../data/uniprot_gene_map.csv
+
+Main outputs:
+    ../output/logodds_results/<GENE>/<GENE>_<DRUG>_logodds.csv
+    ../output/logodds_results/<GENE>/sorted_mlp.csv
+
+Output description:
+    For each drug and structural cluster, computes Fisher exact test
+    enrichment and reports log2 odds ratios.
+
+High positive log2 odds:
+    The cluster is enriched for predicted drug-sensitive mutations.
+
+Used by:
+    - drug-response interpretation
+    - flatmap visualization
+    - Tahoe validation
+
+
+============================================================
+5. PERTURB-SEQ / X-ATLAS VALIDATION
+============================================================
+
+Purpose:
+    Uses Perturb-seq gene perturbation data to test whether STARMAP-ranked
+    TRNs are experimentally supported.
+
+This stage has four substeps:
+
+A. Download X-Atlas files
+B. Compute per-cell TRN gene-set scores
+C. Compare perturbed vs control cells
+D. Build STARMAP-to-Perturb-seq confidence ranking
+
+------------------------------------------------------------
+5A. Download X-Atlas Files
+------------------------------------------------------------
+
+Main input:
+    Figshare article ID for X-Atlas data
+
+Main output:
+    ../data/downloads/
+
+Expected downstream file:
+    ../data/downloads/HCT116_filtered_dual_guide_cells.h5ad
+
+------------------------------------------------------------
+5B. Compute Gene-Set Means
+------------------------------------------------------------
+
+Main inputs:
+    - HCT116 Perturb-seq h5ad file
+    - TRN gene-set CSV files
+
+Main output:
+    ../output/geneset_means.parquet
+
+Output description:
+    Per-cell mean expression scores for each TRN gene set.
+
+------------------------------------------------------------
+5C. Perturbed vs Control Statistics
+------------------------------------------------------------
+
+Main inputs:
+    - selected gene
+    - ../output/geneset_means.parquet
+    - HCT116 Perturb-seq metadata
+
+Main output:
+    ../output/<GENE>_perturbed_df.csv
+
+Output description:
+    For each pathway, reports:
+        - perturbation-control delta
+        - p-value
+        - number of perturbed cells
+        - number of control cells
+
+------------------------------------------------------------
+5D. Perturb-seq Confidence Ranking
+------------------------------------------------------------
+
+Main inputs:
+    - Perturb-seq statistics from Step 5C
+    - Gi* TRN scores from Step 2
+
+Main output:
+    ../output/<GENE>_sub.csv
+
+Output description:
+    Ranked confidence table showing whether significant Perturb-seq
+    pathways appear near the top of the STARMAP Gi* ranking.
+
+
+============================================================
+6. TAHOE DRUG PERTURBATION VALIDATION
+============================================================
+
+Purpose:
+    Uses Tahoe drug perturbation pseudobulk expression data to test whether
+    STARMAP-ranked drugs show experimental TRN response evidence.
+
+This stage has two substeps:
+
+A. Compute Tahoe ssGSEA scores for mutant vs other cell lines
+B. Build empirical confidence from Tahoe drug response evidence
+
+------------------------------------------------------------
+6A. Tahoe ssGSEA Mutant vs Other Cell Lines
+------------------------------------------------------------
+
+Main inputs:
+    - selected gene
+    - Tahoe pseudobulk drug expression files
+    - OmicsSomaticMutations.csv
+    - sample_info.csv
+    - TRN gene-set CSV files
+
+Main output:
+    ../output/<GENE>_mut_v_other_perdrug/
+
+Output files per drug:
+    - ssgsea_cluster_all_trns_<DRUG>.csv
+    - ssgsea_other_all_trns_<DRUG>.csv
+
+Output description:
+    Drug-specific TRN activity profiles for:
+        - gene-mutant cell lines
+        - other cell lines
+
+------------------------------------------------------------
+6B. Tahoe Empirical Confidence
+------------------------------------------------------------
+
+Main inputs:
+    - Tahoe ssGSEA outputs from Step 6A
+    - STARMAP sorted drug log-odds rankings from Step 4
+
+Main output:
+    ../output/emp_files/<GENE>_emp.csv
+
+Output description:
+    Empirical confidence curve showing whether highly ranked STARMAP drugs
+    are supported by Tahoe drug perturbation TRN response evidence.
+
+
+============================================================
+MAIN DATA DEPENDENCIES
+============================================================
+
+Core structural inputs:
+    ../data/3Dcoord_allgenes.csv
+    AlphaFold PDB structures
+
+Core mutation/drug inputs:
+    ../data/ParsedMutations_Plus_Sites_Filtered.csv
+    ../data/CCLE_cell_line_drugsensitivity_10072023.csv
+    ../data/OmicsSomaticMutations.csv
+    ../data/sample_info.csv
+
+Core mapping inputs:
+    ../data/gene_uniprot_res_clust.csv
+    ../data/uniprot_gene_map.csv
+    ../data/ccle_gene_position_cellline.csv
+
+Core TRN inputs:
+    ../data/GSEA_files/
+    ../../5_perturbseq_xatlas/data/trn_gene_sets/
+
+Experimental validation inputs:
+    ../data/downloads/HCT116_filtered_dual_guide_cells.h5ad
+    ../data/tahoe_data_pseudobulk_cellline/
+
+
+============================================================
+FINAL PIPELINE OUTPUTS
+============================================================
+
+Structural flatmaps:
+    ../output/<FIRST_LETTER>/<GENE>_nmfinfo_final.csv
+
+TRN spatial scores:
+    ../output/scores/<FIRST_LETTER>/<GENE>_scores_all_trns.csv
+
+MLP drug sensitivity outputs:
+    ../output/MLP_outputs/<UNIPROT_ID>/<DRUG>/
+
+Drug log-odds results:
+    ../output/logodds_results/<GENE>/
+
+Perturb-seq validation:
+    ../output/<GENE>_sub.csv
+
+Tahoe validation:
+    ../output/emp_files/<GENE>_emp.csv
+
+
+============================================================
+CONCEPTUAL SUMMARY
+============================================================
+
+STARMAP begins by flattening protein 3D structure into a residue-level 2D
+map. It then projects mutation-linked TRN activity onto this map and uses
+Gi* statistics to identify spatially localized pathway signals.
+
+In parallel, structural mutation features are used to train drug-specific
+MLP models that predict drug sensitivity. These predictions are collapsed
+into cluster-level log-odds scores, identifying protein regions associated
+with drug response.
+
+Finally, STARMAP validates predicted TRN and drug associations using two
+orthogonal experimental resources:
+
+1. Perturb-seq / X-Atlas:
+    Tests whether STARMAP-ranked TRNs are altered when the gene is perturbed.
+
+2. Tahoe drug perturbation:
+    Tests whether STARMAP-ranked drugs show corresponding TRN response
+    evidence in gene-mutant cell lines.
+
+Together, these outputs support interpretation of how mutation location
+within protein structure relates to transcriptional network disruption
+and drug sensitivity.
