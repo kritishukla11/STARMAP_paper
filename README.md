@@ -6,6 +6,19 @@ This repository contains code associated with the STARMAP manuscript (currently 
 
 ---
 
+## License
+
+This project is released under a custom restricted use license.
+
+### Summary
+- Free for non-commercial academic and research use  
+- Modification and redistribution allowed for academic purposes  
+- Commercial use is strictly prohibited without explicit permission  
+
+For commercial licensing or other inquiries, please contact elizabeth_brunk@med.unc.edu.
+
+---
+
 ## Repository Contents
 
 ### 1. Example Pipeline (TP53)
@@ -69,18 +82,6 @@ To run the TP53 pipeline:
 
 ---
 
-## License
-
-This project is released under the **STARMAP Academic Use License**.
-
-### Summary
-- Free for non-commercial academic and research use  
-- Modification and redistribution allowed for academic purposes  
-- Commercial use is strictly prohibited without explicit permission  
-
-For commercial licensing or other inquiries, please contact the authors.
-
----
 
 ## Citation
 
