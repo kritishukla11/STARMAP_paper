@@ -1,4 +1,4 @@
-# STARMAP: Structural Transcriptomic Analysis of Residue-level Mutation-Associated Pathways
+# STARMAP: Structure-based Topological Analysis of Regulatory and Molecular Activity Patterns
 
 STARMAP is a computational framework for integrating protein structure, mutation data, transcriptional networks, and drug response to identify functionally relevant regions of proteins and their downstream effects.
 
